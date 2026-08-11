@@ -1,12 +1,16 @@
 import eventlet
 import eventlet.wsgi
 import ssl
+import sys
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from engineio.payload import Payload
 import vgamepad as vg
 import time
 import logging
+
+# Make console output safe on non-UTF-8 (e.g. cp1250) consoles, so emoji prints don't crash
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # Reduce logging overhead
 logging.getLogger('socketio').setLevel(logging.ERROR)
@@ -22,7 +26,22 @@ Payload.max_decode_packets = 10000
 # Use eventlet for lower latency WebSockets
 socketio = SocketIO(app, async_mode='eventlet', logging=False, cors_allowed_origins='*', max_http_buffer_size=10**7)
 
-gamepad = vg.VX360Gamepad()
+def create_gamepad():
+    """ Create the virtual Xbox 360 gamepad with retries.
+    ViGEmBus can transiently fail to attach a target right after install/boot,
+    so retry before giving up. """
+    for attempt in range(1, 11):
+        try:
+            gp = vg.VX360Gamepad()
+            print(f"✅ Virtual Xbox 360 gamepad created (attempt {attempt})")
+            return gp
+        except AssertionError as e:
+            print(f"! Gamepad creation failed (attempt {attempt}/10): {e}")
+            time.sleep(0.5)
+    raise RuntimeError("Could not create virtual Xbox 360 gamepad. Is ViGEmBus installed?")
+
+
+gamepad = create_gamepad()
 
 # Constants for the gamepad 
 LAST_UPDATE = 0
@@ -124,8 +143,8 @@ if __name__ == '__main__':
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
 
-    socket = eventlet.listen(('0.0.0.0', 5000))
+    socket = eventlet.listen(('192.168.0.174', 9080))
     secure_socket = eventlet.wrap_ssl(socket, certfile="cert.pem", keyfile="key.pem", server_side=True)
 
-    print("🚀 Running secure WebSocket server on https://0.0.0.0:5000")
+    print("🚀 Running secure WebSocket server on https://0.0.0.0:9080")
     eventlet.wsgi.server(secure_socket, app)
